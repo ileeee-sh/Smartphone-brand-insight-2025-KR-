@@ -1,0 +1,111 @@
+import re
+import requests, json, time
+import pandas as pd
+
+url = "https://openapi.naver.com/v1/datalab/shopping/category/keywords"
+headers = {
+    "X-Naver-Client-Id",
+    "X-Naver-Client-Secret"
+}
+
+base_patterns = {
+    "갤럭시": ["S25", "Z Fold 7", "Z Flip 7", "A36", "A56", "M36"],
+    "Galaxy": ["S25", "Z Fold 7", "Z Flip 7", "A36", "A56", "M36"],
+    "iPhone": ["16e", "17", "17 Air", "17 Pro", "17 Pro Max"],
+    "아이폰": ["16e", "17", "17 Air", "17 Pro", "17 Pro Max"]
+}
+
+s25_suffixes = ["", "+", " Ultra", " Edge", " FE", "플러스", "울트라", "엣지"]
+fold_variants = ["Fold", "폴드"]
+flip_variants = ["Flip", "플립"]
+z_variants = ["Z", "z", "제트"]
+iphone_air = ["Air", "air", "에어"]
+iphone_pro = ["Pro", "pro", "프로"]
+iphone_max = ["Max", "max", "맥스"]
+
+expanded_keywords = []
+
+for brand, models in base_patterns.items():
+    for model in models:
+        # Galaxy S25 시리즈
+        if re.match(r"[Ss]25", model, flags=re.IGNORECASE):
+            for suffix in s25_suffixes:
+                for space in ["", " "]:
+                    variant = f"{brand}{space}{re.sub(r'([Ss]25)', f'S25{suffix}', model, flags=re.IGNORECASE)}"
+                    expanded_keywords.extend([variant, variant.replace(" ", "")])
+
+        # Galaxy Z 시리즈 (Fold/Flip , 한영, ignorecase)
+        elif re.search(r"Z\s?(Fold|Flip)", model, flags=re.IGNORECASE):
+            for z in z_variants:
+                for f in fold_variants + flip_variants:
+                    variant = re.sub(r"Z\s?(Fold|Flip)", f"{z} {f}", model, flags=re.IGNORECASE)
+                    for space in ["", " "]:
+                        expanded_keywords.extend([
+                            f"{brand}{space}{variant}",
+                            f"{brand}{space}{variant}".replace(" ", "")
+                        ])
+
+        # iPhone 시리즈 (Air,Pro, Max)
+        elif re.search(r"17", model):
+            variants = []
+            if re.search(r"Air", model, flags=re.IGNORECASE):
+                variants = iphone_air
+            elif re.search(r"Pro Max", model, flags=re.IGNORECASE):
+                variants = [f"{p} {m}" for p in iphone_pro for m in iphone_max]
+            elif re.search(r"Pro", model, flags=re.IGNORECASE):
+                variants = iphone_pro
+            else:
+                variants = [""]
+
+            for v in variants:
+                variant = re.sub(r"(Air|Pro(\s?Max)?)", v, model, flags=re.IGNORECASE)
+                for space in ["", " "]:
+                    expanded_keywords.extend([
+                        f"{brand}{space}{variant}",
+                        f"{brand}{space}{variant}".replace(" ", "")
+                    ])
+
+# 중복 제거
+expanded_keywords = sorted(set(expanded_keywords))
+print(f"최종 확장된 키워드 목록: {expanded_keywords},\n{len(expanded_keywords)}개")
+
+ages_list = ["10"]
+results = []
+
+for age in ages_list:
+    for k in expanded_keywords:
+        data = {
+            "startDate": "2025-01-01",
+            "endDate": "2025-10-31",
+            "timeUnit": "month",
+            "category": "50000249",
+            "keyword": [{"name": k, "param": [k]}],
+            "device": "",
+            "gender": "m",
+            "ages": [age]
+        }
+        res = requests.post(url, headers=headers, json=data)
+        js = res.json()
+        js["age"] = age 
+        results.append(js)
+        print(f"{k} ({age}대) 완료.")
+        time.sleep(0.5)
+
+df_list = []
+for r in results:
+    if 'results' in r:
+        age = r.get("age", "전체")
+        for item in r['results']:
+            name = item['title']
+            for d in item['data']:
+                df_list.append({
+                    "keyword": name,
+                    "period": d['period'],
+                    "ratio": d['ratio'],
+                    "age": age })
+    else:
+        print("오류:", r)
+
+df = pd.DataFrame(df_list)
+
+df.to_excel("smartphone_trend_M10.xlsx", index=False)
